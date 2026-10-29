@@ -1,0 +1,5 @@
+.tmp/
+.superpowers/
+node_modules/
+coverage/
+*.log
