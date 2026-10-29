@@ -1,0 +1,23 @@
+{
+  "name": "kimi-code-429-retry",
+  "version": "1.0.0",
+  "description": "Retry transient Kimi Code HTTP 429 failures after 60 seconds",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "author": "Shinarin",
+  "homepage": "https://github.com/Shinarin/kimi-code-429-retry#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shinarin/kimi-code-429-retry.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "test:unit": "node --test test/*.test.mjs",
+    "test:integration": "node --test test/integration/*.test.mjs",
+    "check": "npm run test:unit && npm run test:integration"
+  }
+}
