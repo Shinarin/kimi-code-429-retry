@@ -50,7 +50,7 @@
 
 ## 状态所有者与事件顺序
 
-状态只写入 `$KIMI_CODE_HOME/kimi-code-429-retry/`，不读取或修改 Kimi 的会话文件。每个会话最多一个 pending 记录；worker 是定时与恢复子进程的唯一所有者。pending/running 记录包含随机会话任务令牌、到期时间和 worker PID，不保存提示、错误正文或凭据。
+状态只写入 `$KIMI_CODE_HOME/kimi-code-429-retry/`，不读取或修改 Kimi 的会话文件。每个会话最多一个 pending 记录；worker 是定时与恢复子进程的唯一所有者。记录包含随机会话任务令牌和时间；running 还包含 worker PID。不保存提示、错误正文或凭据。
 
 ```text
 Kimi CLI                 StopFailure hook              Retry worker              活动 hooks
@@ -69,7 +69,7 @@ Kimi CLI                 StopFailure hook              Retry worker             
 - 重复失败事件看到有效 pending/running 时不重复调度；失活进程留下的记录可被后续失败安全替换。
 - `UserPromptSubmit`、`SessionEnd`、`Interrupt` 取消尚未领取的 pending；`Stop` 清理成功手动恢复留下的等待记录。
 - 领取与取消以文件系统的原子创建/重命名/删除协调；worker 领取后视为恢复已提交，活动 hook 不强行杀死模型进程。
-- worker 崩溃不会反复发起请求；后续新失败可依据 PID 清理失活记录。
+- worker 崩溃不会反复发起请求；后续新失败可依据 pending 到期宽限期或 running PID 清理失活记录。
 - 禁用插件会阻止新 hook，但不能撤销已经 detached 的 worker；文档提供删除 pending 的取消方式。
 
 ## 验收场景
