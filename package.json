@@ -4,6 +4,7 @@
   "description": "Retry transient Kimi Code HTTP 429 failures after 60 seconds",
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@11.5.1",
   "license": "MIT",
   "author": "Shinarin",
   "homepage": "https://github.com/Shinarin/kimi-code-429-retry#readme",
@@ -18,6 +19,9 @@
     "test": "node --test",
     "test:unit": "node --test test/*.test.mjs",
     "test:integration": "node --test test/integration/*.test.mjs",
-    "check": "npm run test:unit && npm run test:integration"
+    "check": "pnpm test:unit && pnpm test:integration"
+  },
+  "devDependencies": {
+    "node-pty": "^1.1.0"
   }
 }

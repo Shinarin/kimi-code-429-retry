@@ -1,0 +1,48 @@
+{
+  "name": "kimi-code-429-retry",
+  "version": "1.0.0",
+  "description": "Retry transient Kimi Code HTTP 429 failures after 60 seconds",
+  "keywords": [
+    "kimi-code",
+    "429",
+    "rate-limit",
+    "retry"
+  ],
+  "author": "Shinarin",
+  "homepage": "https://github.com/Shinarin/kimi-code-429-retry",
+  "license": "MIT",
+  "interface": {
+    "displayName": "429 Retry",
+    "shortDescription": "Retry transient HTTP 429 failures after 60 seconds",
+    "longDescription": "Submits one retry to the original Desktop or Kimi Web session through the loopback Server API. Quota and balance limits are never retried.",
+    "developerName": "Shinarin",
+    "websiteURL": "https://github.com/Shinarin/kimi-code-429-retry"
+  },
+  "hooks": [
+    {
+      "event": "StopFailure",
+      "command": "node ./hooks/stop-failure.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "UserPromptSubmit",
+      "command": "node ./hooks/session-activity.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "SessionEnd",
+      "command": "node ./hooks/session-activity.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "Interrupt",
+      "command": "node ./hooks/session-activity.mjs",
+      "timeout": 5
+    },
+    {
+      "event": "Stop",
+      "command": "node ./hooks/session-activity.mjs",
+      "timeout": 5
+    }
+  ]
+}

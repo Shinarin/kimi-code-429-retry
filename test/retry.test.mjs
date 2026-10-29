@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,14 +7,11 @@ import {
   DEFAULT_DELAY_MS,
   RECOVERY_PROMPT,
   cancelRetry,
-  launchRecovery,
-  resolveCli,
   runWorker,
   scheduleRetry,
 } from '../lib/retry.mjs';
 
 await mkdir(path.join(process.cwd(), '.tmp'), { recursive: true });
-
 const sessionId = 'session_68840bfa-fbf2-4ca1-bbd1-776f825845f6';
 
 function failure() {
@@ -23,7 +19,7 @@ function failure() {
     hook_event_name: 'StopFailure',
     session_id: sessionId,
     cwd: process.cwd(),
-    client_type: 'kimi_code_cli',
+    client_type: 'kimi_code_web',
     error_type: 'APIProviderRateLimitError',
     error_message: "429 We're receiving too many requests at the moment. & not-a-command",
   };
@@ -53,11 +49,7 @@ test('schedules exactly 60 seconds later and cancels before launch', async (t) =
   const root = await stateRoot(t);
   const workers = [];
   const now = () => 1_000;
-  const options = {
-    stateRoot: root,
-    now,
-    spawnWorker: (details) => workers.push(details),
-  };
+  const options = { stateRoot: root, now, spawnWorker: (details) => workers.push(details) };
 
   assert.equal(DEFAULT_DELAY_MS, 60_000);
   assert.equal(await scheduleRetry(failure(), options), true);
@@ -88,10 +80,7 @@ test('deduplicates pending and running recovery for a session', async (t) => {
   assert.equal(workerCount, 1);
 
   await cancelRetry(failure(), { stateRoot: root });
-  await putRecord(root, sessionId, 'running', {
-    token: 'existing',
-    worker_pid: process.pid,
-  });
+  await putRecord(root, sessionId, 'running', { token: 'existing', worker_pid: process.pid });
   assert.equal(await scheduleRetry(failure(), options), false);
   assert.equal(workerCount, 1);
 });
@@ -99,14 +88,8 @@ test('deduplicates pending and running recovery for a session', async (t) => {
 test('replaces abandoned pending and running records without launching a stale worker', async (t) => {
   const root = await stateRoot(t);
   const now = Date.now();
-  await putRecord(root, sessionId, 'pending', {
-    token: 'abandoned',
-    retry_at: now - 120_000,
-  });
-  await putRecord(root, sessionId, 'running', {
-    token: 'dead',
-    worker_pid: -1,
-  });
+  await putRecord(root, sessionId, 'pending', { token: 'abandoned', retry_at: now - 120_000 });
+  await putRecord(root, sessionId, 'running', { token: 'dead', worker_pid: -1 });
 
   let workerCount = 0;
   assert.equal(await scheduleRetry(failure(), {
@@ -117,10 +100,7 @@ test('replaces abandoned pending and running records without launching a stale w
   const pending = await readRecord(root, sessionId, 'pending');
   assert.notEqual(pending.token, 'abandoned');
   assert.equal(workerCount, 1);
-  assert.equal(await runWorker(sessionId, 'abandoned', {
-    stateRoot: root,
-    launch: async () => 0,
-  }), null);
+  assert.equal(await runWorker(sessionId, 'abandoned', { stateRoot: root, launch: async () => 0 }), null);
 });
 
 test('worker waits for the stored deadline, owns running state, and launches once', async (t) => {
@@ -151,11 +131,12 @@ test('worker waits for the stored deadline, owns running state, and launches onc
   assert.equal(waited, 60_000);
   assert.equal(result, 0);
   assert.equal(launchCount, 1);
+  assert.equal((await readRecord(root, sessionId, 'result')).status, 'accepted');
   await assert.rejects(readRecord(root, sessionId, 'running'), { code: 'ENOENT' });
   assert.equal(await runWorker(sessionId, token, { stateRoot: root }), null);
 });
 
-test('does not schedule from a recovery process or unsafe event data', async (t) => {
+test('does not schedule from a marked recovery process or unsafe event data', async (t) => {
   const root = await stateRoot(t);
   let workerCount = 0;
   const options = { stateRoot: root, spawnWorker: () => { workerCount += 1; } };
@@ -180,47 +161,47 @@ test('allows a short test delay through the environment', async (t) => {
   assert.equal((await readRecord(root, sessionId, 'pending')).retry_at, 125);
 });
 
-test('resolves native Windows and npm CLI launchers without a shell for executables', async (t) => {
+test('automatic prompt state prevents recursion and only genuine prompts reset it', async (t) => {
   const root = await stateRoot(t);
-  const bin = path.join(root, 'bin with spaces');
-  await mkdir(bin, { recursive: true });
-  const executable = path.join(bin, 'kimi.exe');
-  await writeFile(executable, '');
+  const options = { stateRoot: root, spawnWorker: () => {} };
+  await cancelRetry({
+    ...failure(),
+    hook_event_name: 'UserPromptSubmit',
+    prompt: RECOVERY_PROMPT,
+  }, options);
+  assert.equal((await readRecord(root, sessionId, 'result')).status, 'submitting');
+  assert.equal(await scheduleRetry(failure(), options), false);
 
-  assert.equal(await resolveCli({ PATH: bin }, 'win32'), executable);
-  assert.equal(await resolveCli({
-    PATH: bin,
-    KIMI_CODE_429_RETRY_CLI: executable,
-  }, 'win32'), executable);
-  assert.equal(await resolveCli({ PATH: '' }, 'linux'), 'kimi');
+  await cancelRetry({ ...failure(), hook_event_name: 'UserPromptSubmit' }, options);
+  assert.equal((await readRecord(root, sessionId, 'result')).status, 'submitting');
+  assert.equal(await scheduleRetry(failure(), options), false);
+
+  await cancelRetry({
+    ...failure(),
+    hook_event_name: 'UserPromptSubmit',
+    prompt: 'A genuine new user task',
+  }, options);
+  await assert.rejects(readRecord(root, sessionId, 'result'), { code: 'ENOENT' });
+  assert.equal(await scheduleRetry(failure(), options), true);
+  await cancelRetry({ ...failure(), hook_event_name: 'Stop' }, options);
+  await assert.rejects(readRecord(root, sessionId, 'pending'), { code: 'ENOENT' });
 });
 
-test('launches the documented session resume with a fixed prompt and recovery marker', async () => {
-  const calls = [];
-  async function launch(cliPath) {
-    const child = new EventEmitter();
-    const options = {
-      cliPath,
-      platform: 'win32',
-      env: { KIMI_CODE_HOME: 'isolated-home' },
-      spawnProcess: (command, args, spawnOptions) => {
-        calls.push({ command, args, spawnOptions });
-        queueMicrotask(() => child.emit('close', 0));
-        return child;
-      },
-    };
-    assert.equal(await launchRecovery({ session_id: sessionId, cwd: process.cwd() }, options), 0);
-  }
+test('worker records failure without error text and permits a later independent failure', async (t) => {
+  const root = await stateRoot(t);
+  let token;
+  await scheduleRetry(failure(), {
+    stateRoot: root,
+    spawnWorker: (details) => { token = details.token; },
+  });
+  await assert.rejects(runWorker(sessionId, token, {
+    stateRoot: root,
+    sleep: async () => {},
+    launch: async () => { throw new Error('sensitive server response'); },
+  }), /sensitive server response/);
 
-  await launch('D:\\Program Files\\Kimi\\kimi.exe');
-  await launch('D:\\tools\\kimi.cmd');
-  for (const call of calls) {
-    assert.deepEqual(call.args, ['--session', sessionId, '--prompt', RECOVERY_PROMPT]);
-    assert.equal(call.spawnOptions.cwd, process.cwd());
-    assert.equal(call.spawnOptions.env.KIMI_CODE_429_RETRY_ACTIVE, '1');
-    assert.equal(call.spawnOptions.stdio, 'ignore');
-    assert.equal(call.args.some((argument) => argument.includes('not-a-command')), false);
-  }
-  assert.equal(calls[0].spawnOptions.shell, false);
-  assert.equal(calls[1].spawnOptions.shell, true);
+  const result = await readRecord(root, sessionId, 'result');
+  assert.equal(result.status, 'failed');
+  assert.equal(JSON.stringify(result).includes('sensitive server response'), false);
+  assert.equal(await scheduleRetry(failure(), { stateRoot: root, spawnWorker: () => {} }), true);
 });
