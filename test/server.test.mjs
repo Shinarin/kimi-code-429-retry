@@ -117,3 +117,22 @@ test('does not repeat POST when the server rejects the recovery prompt', async (
   const stateFiles = await readFile(path.join(home, 'server.token'), 'utf8');
   assert.equal(stateFiles, 'isolated-test-token');
 });
+
+test('marks a lost POST response as an uncertain submission', async (t) => {
+  const home = await fixture(t);
+  let posts = 0;
+  await assert.rejects(launchRecovery({ session_id: sessionId, cwd: process.cwd() }, {
+    home,
+    fetch: async (url) => {
+      if (url.endsWith('/prompts')) {
+        posts += 1;
+        throw new Error('connection lost after acceptance');
+      }
+      return envelope({ code: 0, data: { id: sessionId } });
+    },
+  }), (error) => {
+    assert.equal(error.recoverySubmissionStarted, true);
+    return true;
+  });
+  assert.equal(posts, 1);
+});

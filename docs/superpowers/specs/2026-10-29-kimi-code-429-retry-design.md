@@ -46,8 +46,8 @@ Skill/MCP 无失败监听能力；插件没有模型请求拦截接口。直接�
 2. 仅当 `error_type` 为 `APIProviderRateLimitError`、消息含独立 429 状态，且匹配以下官方临时错误时调度：
    - `We're receiving too many requests`
    - `The engine is currently overloaded`
-3. **额度耗绝不重试。** 5 小时、每周、每月额度、余额、组织额度、并发风控、未知 429、401/403 和用户中断均不调度。
-4. 每个自动恢复提示最多被接受一次；该提示自身失败不得再次自动调度。后续真实用户新回合可重新获得一次自动恢复资格。
+3. **额度耗绝不重试。** 永久限额排除先于临时匹配；即使同一包装消息同时含临时文案，只要含 5 小时、每周、每月额度、余额、组织额度或并发风控内容也不调度。未知 429、401/403 和用户中断同样不调度。
+4. 每个自动恢复提示最多被接受一次；该提示自身失败不得再次自动调度。POST 已发起但响应丢失、超时或无法解析时写 `unknown`，同样是终止性防递归状态，直到真实用户活动重置，不能降级为可重试的 `failed`。后续真实用户新回合可重新获得一次自动恢复资格。
 5. 恢复提示为固定文本，不含服务端错误正文；它要求模型根据原会话继续任务，并检查已完成的副作用。
 6. 会话 ID 只接受 `[A-Za-z0-9_-]` 且最长 128；工作目录必须为绝对路径。
 7. worker 从 `server.token` 读取 token，仅在内存中用于 loopback 请求。不得记录 token，也不得把它发送到非 loopback URL。
@@ -63,6 +63,7 @@ Skill/MCP 无失败监听能力；插件没有模型请求拦截接口。直接�
 Server/Desktop            StopFailure hook             Retry worker              活动 hooks
    | 临时性 429 最终失败      |                             |                         |
    |---------------------->| 创建 pending                |                         |
+   |                       | 确认会话当前仍失败             |                         |
    |                       | 启动独立 worker              |                         |
    |                       |---------------------------->| 等待至 retry_at            |
    | 真实用户活动             |                             |                         | 删除 pending/result
@@ -77,7 +78,8 @@ Server/Desktop            StopFailure hook             Retry worker             
 ```
 
 - pending/running 去重；失活记录由后续失败根据到期宽限期或 PID 安全替换。
-- `submitting` 先于 API 返回写入，保证快速失败也不会绕过防递归；`accepted` 在其后写入。
+- pending 创建后、worker 启动前必须经 Server API 确认 `busy=false` 且 `last_turn_reason=failed`，随后再核对 pending token。这样即使 StopFailure 晚于真实用户新回合到达，或用户在确认期间活动，也会安全放弃；无法确认时不启动 worker。
+- `submitting` 先于 API 返回写入，保证快速失败也不会绕过防递归；`accepted` 在其后写入。POST 结果不确定写 `unknown`，不得覆盖为可重试失败。
 - 真实 `UserPromptSubmit`、`Stop`、`SessionEnd`、`Interrupt` 清理相应状态。缺少 prompt 字段时不清除防递归 result，宁可跳过一次也不无限重试。
 - 取消只作用于尚未领取的 pending；已接受的提示应通过客户端现有中止能力处理。
 - 禁用插件阻止新 hook；已经 detached 的 worker 需通过删除 pending 取消。
@@ -85,8 +87,9 @@ Server/Desktop            StopFailure hook             Retry worker             
 ## 验收场景
 
 - 默认延迟为 60,000 ms；只向原会话 POST 一次固定提示，不带权限覆盖，不产生 shell 命令。
-- 所有额度/余额/组织限额与未知错误不调度；畸形输入、非法 ID、非 loopback URL 和多 server 归属歧义安全拒绝。
+- 所有额度/余额/组织限额（包括混合包装文案）与未知错误不调度；畸形输入、非法 ID、非 loopback URL 和多 server 归属歧义安全拒绝。
 - pending/running 去重、活动取消、失活恢复、自动提示防递归和后续真实提示重置均有测试。
+- StopFailure 晚于用户活动、确认期间取消、POST 接受后响应丢失等受控交错均有回归测试；后两者不得再次调度。
 - 真实安装器显示 `Status: enabled | state: ok`；隔离 `kimi web` 中创建会话 → 首次成功 → 第二次 429 → 自动向同一 session ID 提交恢复 → 历史含成功结果，且不创建 fork。
 - README 明确 Desktop/Web 范围、TUI 不支持、实验性 API、token 边界、结果查看和取消方式。
 - 主模型子代理独立审查并修正阻断问题后再公开推送。

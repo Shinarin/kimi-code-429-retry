@@ -70,3 +70,16 @@ test('fails closed for missing or malformed payloads', () => {
     assert.equal(shouldRetry(payload), false);
   }
 });
+
+test('permanent limits win when a wrapper also contains transient wording', async (t) => {
+  const messages = [
+    "429 You've reached your monthly usage limit for this billing cycle. We're receiving too many requests",
+    "429 Your credit balance is insufficient. The engine is currently overloaded",
+    "429 You've reached your concurrent request limit. We're receiving too many requests",
+  ];
+  for (const message of messages) {
+    await t.test(message, () => {
+      assert.equal(shouldRetry(failure(message)), false);
+    });
+  }
+});

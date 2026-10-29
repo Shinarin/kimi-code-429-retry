@@ -49,7 +49,8 @@ test('schedules exactly 60 seconds later and cancels before launch', async (t) =
   const root = await stateRoot(t);
   const workers = [];
   const now = () => 1_000;
-  const options = { stateRoot: root, now, spawnWorker: (details) => workers.push(details) };
+  const options = { stateRoot: root,
+    confirmFailure: async () => true, now, spawnWorker: (details) => workers.push(details) };
 
   assert.equal(DEFAULT_DELAY_MS, 60_000);
   assert.equal(await scheduleRetry(failure(), options), true);
@@ -64,6 +65,7 @@ test('schedules exactly 60 seconds later and cancels before launch', async (t) =
   assert.equal(await cancelRetry(failure(), { stateRoot: root }), true);
   assert.equal(await runWorker(sessionId, pending.token, {
     stateRoot: root,
+    confirmFailure: async () => true,
     now,
     launch: async () => { launched = true; },
   }), null);
@@ -73,7 +75,8 @@ test('schedules exactly 60 seconds later and cancels before launch', async (t) =
 test('deduplicates pending and running recovery for a session', async (t) => {
   const root = await stateRoot(t);
   let workerCount = 0;
-  const options = { stateRoot: root, spawnWorker: () => { workerCount += 1; } };
+  const options = { stateRoot: root,
+    confirmFailure: async () => true, spawnWorker: () => { workerCount += 1; } };
 
   assert.equal(await scheduleRetry(failure(), options), true);
   assert.equal(await scheduleRetry(failure(), options), false);
@@ -94,13 +97,15 @@ test('replaces abandoned pending and running records without launching a stale w
   let workerCount = 0;
   assert.equal(await scheduleRetry(failure(), {
     stateRoot: root,
+    confirmFailure: async () => true,
     now: () => now,
     spawnWorker: () => { workerCount += 1; },
   }), true);
   const pending = await readRecord(root, sessionId, 'pending');
   assert.notEqual(pending.token, 'abandoned');
   assert.equal(workerCount, 1);
-  assert.equal(await runWorker(sessionId, 'abandoned', { stateRoot: root, launch: async () => 0 }), null);
+  assert.equal(await runWorker(sessionId, 'abandoned', { stateRoot: root,
+    confirmFailure: async () => true, launch: async () => 0 }), null);
 });
 
 test('worker waits for the stored deadline, owns running state, and launches once', async (t) => {
@@ -109,6 +114,7 @@ test('worker waits for the stored deadline, owns running state, and launches onc
   let token;
   await scheduleRetry(failure(), {
     stateRoot: root,
+    confirmFailure: async () => true,
     now,
     spawnWorker: (details) => { token = details.token; },
   });
@@ -117,6 +123,7 @@ test('worker waits for the stored deadline, owns running state, and launches onc
   let launchCount = 0;
   const result = await runWorker(sessionId, token, {
     stateRoot: root,
+    confirmFailure: async () => true,
     now,
     sleep: async (milliseconds) => { waited = milliseconds; },
     launch: async () => {
@@ -139,7 +146,8 @@ test('worker waits for the stored deadline, owns running state, and launches onc
 test('does not schedule from a marked recovery process or unsafe event data', async (t) => {
   const root = await stateRoot(t);
   let workerCount = 0;
-  const options = { stateRoot: root, spawnWorker: () => { workerCount += 1; } };
+  const options = { stateRoot: root,
+    confirmFailure: async () => true, spawnWorker: () => { workerCount += 1; } };
 
   assert.equal(await scheduleRetry(failure(), {
     ...options,
@@ -154,6 +162,7 @@ test('allows a short test delay through the environment', async (t) => {
   const root = await stateRoot(t);
   await scheduleRetry(failure(), {
     stateRoot: root,
+    confirmFailure: async () => true,
     now: () => 100,
     env: { KIMI_CODE_429_RETRY_DELAY_MS: '25' },
     spawnWorker: () => {},
@@ -163,7 +172,8 @@ test('allows a short test delay through the environment', async (t) => {
 
 test('automatic prompt state prevents recursion and only genuine prompts reset it', async (t) => {
   const root = await stateRoot(t);
-  const options = { stateRoot: root, spawnWorker: () => {} };
+  const options = { stateRoot: root,
+    confirmFailure: async () => true, spawnWorker: () => {} };
   await cancelRetry({
     ...failure(),
     hook_event_name: 'UserPromptSubmit',
@@ -192,10 +202,12 @@ test('worker records failure without error text and permits a later independent 
   let token;
   await scheduleRetry(failure(), {
     stateRoot: root,
+    confirmFailure: async () => true,
     spawnWorker: (details) => { token = details.token; },
   });
   await assert.rejects(runWorker(sessionId, token, {
     stateRoot: root,
+    confirmFailure: async () => true,
     sleep: async () => {},
     launch: async () => { throw new Error('sensitive server response'); },
   }), /sensitive server response/);
@@ -203,5 +215,73 @@ test('worker records failure without error text and permits a later independent 
   const result = await readRecord(root, sessionId, 'result');
   assert.equal(result.status, 'failed');
   assert.equal(JSON.stringify(result).includes('sensitive server response'), false);
-  assert.equal(await scheduleRetry(failure(), { stateRoot: root, spawnWorker: () => {} }), true);
+  assert.equal(await scheduleRetry(failure(), { stateRoot: root,
+    confirmFailure: async () => true, spawnWorker: () => {} }), true);
+});
+
+test('late StopFailure after genuine activity does not schedule', async (t) => {
+  const root = await stateRoot(t);
+  await cancelRetry({
+    ...failure(),
+    hook_event_name: 'UserPromptSubmit',
+    prompt: 'I already retried manually',
+  }, { stateRoot: root });
+  let workerCount = 0;
+  assert.equal(await scheduleRetry(failure(), {
+    stateRoot: root,
+    confirmFailure: async () => false,
+    spawnWorker: () => { workerCount += 1; },
+  }), false);
+  assert.equal(workerCount, 0);
+  await assert.rejects(readRecord(root, sessionId, 'pending'), { code: 'ENOENT' });
+});
+
+test('cancellation during current-turn confirmation prevents worker startup', async (t) => {
+  const root = await stateRoot(t);
+  let workerCount = 0;
+  assert.equal(await scheduleRetry(failure(), {
+    stateRoot: root,
+    confirmFailure: async () => {
+      await cancelRetry({
+        ...failure(),
+        hook_event_name: 'UserPromptSubmit',
+        prompt: 'A genuine prompt during confirmation',
+      }, { stateRoot: root });
+      return true;
+    },
+    spawnWorker: () => { workerCount += 1; },
+  }), false);
+  assert.equal(workerCount, 0);
+  await assert.rejects(readRecord(root, sessionId, 'pending'), { code: 'ENOENT' });
+});
+
+test('uncertain POST outcome stays terminal for the automatic chain', async (t) => {
+  const root = await stateRoot(t);
+  let token;
+  await scheduleRetry(failure(), {
+    stateRoot: root,
+    confirmFailure: async () => true,
+    spawnWorker: (details) => { token = details.token; },
+  });
+  await cancelRetry({
+    ...failure(),
+    hook_event_name: 'UserPromptSubmit',
+    prompt: RECOVERY_PROMPT,
+  }, { stateRoot: root });
+  await assert.rejects(runWorker(sessionId, token, {
+    stateRoot: root,
+    sleep: async () => {},
+    launch: async () => {
+      const error = new Error('response lost');
+      error.recoverySubmissionStarted = true;
+      throw error;
+    },
+  }), /response lost/);
+
+  assert.equal((await readRecord(root, sessionId, 'result')).status, 'unknown');
+  assert.equal(await scheduleRetry(failure(), {
+    stateRoot: root,
+    confirmFailure: async () => true,
+    spawnWorker: () => {},
+  }), false);
 });

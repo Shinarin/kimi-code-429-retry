@@ -71,16 +71,18 @@ kimi web
 ## 工作方式
 
 ```text
-临时性 429 → StopFailure → 创建 pending → worker 等待 60 秒
-                                             ↓
-真实用户活动 → 取消 pending              发现唯一 loopback server
-                                             ↓
-                              POST 固定提示到原 session ID
-                                             ↓
-                       result=accepted → 成功 Stop 后清理 result
+临时性 429 → StopFailure → 创建 pending → 确认当前仍失败 → worker 等待 60 秒
+                                                           ↓
+真实用户活动 → 取消 pending                            发现唯一 loopback server
+                                                           ↓
+                                            POST 固定提示到原 session ID
+                                                           ↓
+                                         result=accepted → 成功 Stop 后清理 result
 ```
 
-恢复提示会出现在原会话中，结果也可直接在该会话查看。API 返回“已接受”后，worker 不等待回合结束，也不会自动重复 POST。
+恢复提示会出现在原会话中，结果也可直接在该会话查看。API 返回“已接受”后，worker 不等待回合结束，也不会自动重复 POST。POST 已发起但结果不确定时会保留 `unknown` 终止标记，防止同一自动链再次调度。
+
+验证说明：端到端测试使用 `kimi web`；Desktop 共用这套 Server API，但本仓库未单独执行 Desktop UI 烟雾测试。
 
 ### Server 与 token 安全
 
@@ -99,7 +101,7 @@ kimi web
   $KIMI_CODE_HOME/kimi-code-429-retry/sessions/<session_id>/pending.json
   ```
 
-- **查看提交状态：** 同目录的 `result.json` 可能为 `submitting`、`accepted` 或 `failed`。成功 `Stop` 会清除该文件；`failed` 不记录服务端错误正文。
+- **查看提交状态：** 同目录的 `result.json` 可能为 `submitting`、`accepted`、`unknown` 或 `failed`。成功 `Stop` 会清除该文件；`unknown` 和 `failed` 不记录服务端错误正文。
 - **中止已接受的恢复：** 使用客户端现有的中止功能；删除 pending 或 running 文件不会强制停止模型回合。
 - **禁用：** `/plugins disable kimi-code-429-retry`，然后 `/reload`。禁用阻止新 hook；已 detached 的 worker 需先通过删除 pending 取消。
 - **卸载：** `/plugins remove kimi-code-429-retry`。按官方行为，卸载只删除安装记录，不删除 managed 副本；插件状态目录可按需手动删除。
