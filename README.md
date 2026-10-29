@@ -43,6 +43,8 @@
 
 ## 安装
 
+### 从 GitHub 仓库安装
+
 在 Kimi Code 中执行：
 
 ```text
@@ -51,19 +53,37 @@
 /reload
 ```
 
-也可以重启 Desktop 或 `kimi web` 使插件生效。`/plugins info` 应显示 `Status: enabled | state: ok`。
+### GitHub 连接失败时
+
+如果仓库地址安装时报 `fetch failed`，可改用直接 ZIP 地址：
+
+```text
+/plugins install https://github.com/Shinarin/kimi-code-429-retry/archive/refs/heads/main.zip
+/reload
+```
+
+也可以先下载或克隆仓库，再从本地目录安装，绕过 GitHub 下载过程：
+
+```text
+/plugins install <本地插件目录>
+/reload
+```
+
+例如 Windows 上仓库位于 `D:\VSCodeCache\test\kimi-code-429-retry` 时：
+
+```text
+/plugins install D:\VSCodeCache\test\kimi-code-429-retry
+/reload
+```
+
+如果 ZIP 地址仍报 `fetch failed`，请检查 Desktop 使用的代理、VPN 或网络连接。
+
+安装后也可以重启 Desktop 或 `kimi web` 使插件生效。`/plugins info` 应显示 `Status: enabled | state: ok`。
 
 如果只使用 CLI，可先在 TUI 中通过上述命令完成安装，再启动：
 
 ```bash
 kimi web
-```
-
-安装本地源码目录：
-
-```text
-/plugins install <本地插件目录>
-/reload
 ```
 
 官方安装器会把插件复制到 `$KIMI_CODE_HOME/plugins/managed/kimi-code-429-retry/`，实际运行该副本。修改源码目录后需要重新安装。
